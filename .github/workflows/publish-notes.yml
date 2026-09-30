@@ -1,0 +1,46 @@
+name: Draft release notes
+
+# Turns each notes/<date>.md merged to main into a DRAFT GitHub release.
+# Nothing is published automatically: a person reviews the rendered draft
+# under Releases, ticks "Set as the latest release", and clicks Publish.
+# Re-merging a notes file updates its draft; published releases are never touched.
+
+on:
+  push:
+    branches: [main]
+    paths: ["notes/*.md"]
+
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Create or update drafts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --name-only --diff-filter=AM HEAD^ HEAD -- 'notes/*.md' \
+            | { grep -v '^notes/TEMPLATE.md$' || true; } \
+            | while read -r file; do
+                tag=$(awk -F': ' '/^tag:/ {print $2; exit}' "$file")
+                title=$(awk '/^title:/ {sub(/^title: /, ""); print; exit}' "$file")
+                body=$(mktemp)
+                awk 'fm<2 && /^---$/ {fm++; next} fm>=2' "$file" > "$body"
+
+                if ! gh release view "$tag" >/dev/null 2>&1; then
+                  gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$title" --notes-file "$body"
+                  echo "::notice file=$file::Draft $tag created. Review it under Releases and publish it by hand."
+                elif [ "$(gh release view "$tag" --json isDraft -q .isDraft)" = "true" ]; then
+                  gh release edit "$tag" --title "$title" --notes-file "$body"
+                  echo "::notice file=$file::Draft $tag updated."
+                else
+                  echo "::warning file=$file::$tag is already published; not changing it. Edit the release on GitHub if needed."
+                fi
+              done
