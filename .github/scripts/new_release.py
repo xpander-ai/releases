@@ -14,6 +14,8 @@ HYBRID_INDEX = "https://charts.xpander.ai/index.yaml"
 AIRGAP_TAGS_API = "https://api.github.com/repos/xpander-ai/helm-charts/git/matching-refs/tags/airgap-chart-v"
 VERIFY_GUIDE = "https://pages.xpander.ai/airgap-verification-guide"
 RELEASE_ID = re.compile(r"onprem-[1-9][0-9]*")
+TAG = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})")
+NOTES_PATH = re.compile(r"notes/[A-Za-z0-9._-]+\.md")
 SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 PREVIEW_START = "<!-- preview -->"
 PREVIEW_END = "<!-- /preview -->"
@@ -238,12 +240,20 @@ def prepare(env, out_dir, today):
     front, override = {}, None
     if env.get("NOTES_FILE", "").strip():
         path = env["NOTES_FILE"].strip()
+        if not NOTES_PATH.fullmatch(path):
+            raise ReleaseError(f"Notes file '{path}' must be a notes/<name>.md file in this repository")
         if not os.path.isfile(path):
             raise ReleaseError(f"Notes file '{path}' does not exist on main")
         with open(path) as handle:
             front, override = split_front_matter(handle.read())
     date = parse_date(env.get("RELEASE_DATE", ""), today)
-    tag = front.get("tag") if front.get("tag") and not env.get("RELEASE_DATE", "").strip() else release_tag(date)
+    tag = release_tag(date)
+    if front.get("tag") and not env.get("RELEASE_DATE", "").strip():
+        tag = front["tag"]
+        match = TAG.fullmatch(tag)
+        if not match:
+            raise ReleaseError(f"Notes file tag '{tag}' must look like vYYYY.MM.DD")
+        date = dt.date(*(int(part) for part in match.groups()))
     title = env.get("TITLE", "").strip() or front.get("title") or default_title(date)
     resolved = [f"Tag `{tag}`"]
     ctx = {"tag": tag}
@@ -252,8 +262,11 @@ def prepare(env, out_dir, today):
         if airgap:
             resolved.append(f"Air-gapped chart `{airgap}` (chosen)")
         else:
+            token = env.get("CHARTS_TOKEN", "")
+            if not token:
+                raise ReleaseError("RELEASES_REPO_TOKEN is not available to this repository, so the newest air-gapped chart can't be looked up; type the version in 'Airgap chart version'")
             try:
-                refs = json.loads(fetch(AIRGAP_TAGS_API, env.get("CHARTS_TOKEN", "")))
+                refs = json.loads(fetch(AIRGAP_TAGS_API, token))
             except Exception as exc:  # noqa: BLE001
                 raise ReleaseError("Could not list air-gapped chart versions; type the version in 'Airgap chart version'") from exc
             airgap = newest(airgap_versions(refs))

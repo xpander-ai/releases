@@ -153,6 +153,10 @@ def cmd_stage(args):
 
 def cmd_approved(args):
     state = load(args.state)
+    # a candidate marked superseded can still finish verification first and win
+    state.pop("superseded_by", None)
+    if state["stages"]["released"] == "skipped":
+        state["stages"]["released"] = "pending"
     for stage in ("staging", "production", "approved"):
         state["stages"][stage] = "done"
     save(args.state, state)

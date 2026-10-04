@@ -47,6 +47,7 @@ def remote(monkeypatch):
 
 
 def run(tmp_path, **env):
+    env.setdefault("CHARTS_TOKEN", "token")
     outputs = nr.prepare(env, str(tmp_path), TODAY)
     read = lambda name: (tmp_path / name).read_text()  # noqa: E731
     return outputs, read
@@ -124,9 +125,10 @@ def test_bad_date_is_refused(remote, tmp_path):
 
 def test_notes_file_override_keeps_its_text_and_front_matter(remote, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    Path("custom.md").write_text("---\ntag: v2026.09.30\ntitle: Custom title\n---\nHand written body.\n")
-    outputs, read = run(tmp_path, RELEASE_TYPE="airgap", NOTES_FILE="custom.md")
-    assert (outputs["tag"], outputs["title"]) == ("v2026.09.30", "Custom title")
+    Path("notes").mkdir()
+    Path("notes/custom.md").write_text("---\ntag: v2026.09.30\ntitle: Custom title\n---\nHand written body.\n")
+    outputs, read = run(tmp_path, RELEASE_TYPE="airgap", NOTES_FILE="notes/custom.md")
+    assert (outputs["tag"], outputs["title"], outputs["date"]) == ("v2026.09.30", "Custom title", "2026-09-30")
     assert read("notes.md") == "Hand written body.\n"
     assert read("notes-file.md").startswith("---\ntag: v2026.09.30\ntitle: Custom title\n---\n")
     assert (tmp_path / "release-manifest.json").exists()
@@ -155,3 +157,23 @@ def test_airgap_tags_unreachable_asks_for_a_version(monkeypatch, remote, tmp_pat
 def test_hybrid_versions_without_yaml(monkeypatch):
     monkeypatch.setitem(sys.modules, "yaml", None)
     assert nr.hybrid_versions("entries:\n  xpander:\n  - name: x\n    version: 0.20.31\n") == ["0.20.31"]
+
+
+def test_notes_file_outside_notes_is_refused(remote, tmp_path):
+    with pytest.raises(nr.ReleaseError, match="notes/<name>.md"):
+        run(tmp_path, RELEASE_TYPE="hybrid", NOTES_FILE="../../etc/passwd")
+
+
+def test_notes_file_with_a_malformed_tag_is_refused(remote, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("notes").mkdir()
+    Path("notes/bad.md").write_text("---\ntag: v1 $(id)\n---\nBody.\n")
+    with pytest.raises(nr.ReleaseError, match="vYYYY.MM.DD"):
+        run(tmp_path, RELEASE_TYPE="hybrid", NOTES_FILE="notes/bad.md")
+
+
+def test_newest_airgap_without_the_token_asks_for_a_version(remote, tmp_path):
+    with pytest.raises(nr.ReleaseError, match="RELEASES_REPO_TOKEN"):
+        run(tmp_path, RELEASE_TYPE="airgap", CHARTS_TOKEN="")
+    outputs, _ = run(tmp_path, RELEASE_TYPE="hybrid", CHARTS_TOKEN="")
+    assert outputs["hybrid"] == "0.20.31"

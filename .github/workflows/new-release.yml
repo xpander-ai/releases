@@ -106,7 +106,11 @@ jobs:
             gh release create "$TAG" --draft --latest=false --title "$TITLE" --notes-file out/notes-preview.md "${assets[@]}"
           elif [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
             gh release edit "$TAG" --title "$TITLE" --notes-file out/notes-preview.md
-            [ ${#assets[@]} -eq 0 ] || gh release upload "$TAG" "${assets[@]}" --clobber
+            if [ ${#assets[@]} -eq 0 ]; then
+              gh release delete-asset "$TAG" release-manifest.json --yes 2>/dev/null || true
+            else
+              gh release upload "$TAG" "${assets[@]}" --clobber
+            fi
           else
             echo "::warning::$TAG is already published; the preview is in this run's summary only."
             exit 0
@@ -124,16 +128,24 @@ jobs:
         run: |
           set -euo pipefail
           announce=true
+          assets=()
+          [ "$KIND" = hybrid ] || assets+=(out/release-manifest.json)
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --latest --title "$TITLE" --notes-file out/notes.md
+            gh release create "$TAG" --latest --title "$TITLE" --notes-file out/notes.md "${assets[@]}"
           else
-            [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ] || announce=false
-            gh release edit "$TAG" --draft=false --latest --title "$TITLE" --notes-file out/notes.md
-          fi
-          if [ "$KIND" = hybrid ]; then
-            gh release delete-asset "$TAG" release-manifest.json --yes 2>/dev/null || true
-          else
-            gh release upload "$TAG" out/release-manifest.json --clobber
+            # the manifest goes up before the release turns public; an edit of a published release keeps its Latest flag
+            if [ ${#assets[@]} -eq 0 ]; then
+              gh release delete-asset "$TAG" release-manifest.json --yes 2>/dev/null || true
+            else
+              gh release upload "$TAG" "${assets[@]}" --clobber
+            fi
+            latest=()
+            if [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+              latest=(--latest)
+            else
+              announce=false
+            fi
+            gh release edit "$TAG" --draft=false "${latest[@]}" --title "$TITLE" --notes-file out/notes.md
           fi
           echo "announce=$announce" >> "$GITHUB_OUTPUT"
           echo "url=$(gh release view "$TAG" --json url -q .url)" >> "$GITHUB_OUTPUT"
@@ -173,10 +185,11 @@ jobs:
           WHATS_NEW: ${{ steps.prep.outputs.whats_new }}
           ACTION_REQUIRED: ${{ steps.prep.outputs.action_required }}
           URL: ${{ steps.publish.outputs.url }}
+          ACTOR: ${{ github.actor }}
         run: |
           python3 .github/scripts/release_slack.py release-message --tag "$TAG" --title "$TITLE" \
             --airgap "$AIRGAP" --hybrid "$HYBRID" --images "$IMAGES" --action-required "$ACTION_REQUIRED" \
-            --whats-new "$WHATS_NEW" --url "$URL" --actor "${{ github.actor }}"
+            --whats-new "$WHATS_NEW" --url "$URL" --actor "$ACTOR"
           [ -n "$IMAGES" ] || exit 0
           state="https://github.com/xpander-ai/release-manifests/releases/download/$IMAGES/slack.json"
           curl -fsSL "$state" -o slack.json 2>/dev/null || { echo "no Slack card for $IMAGES"; exit 0; }
