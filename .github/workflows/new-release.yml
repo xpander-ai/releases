@@ -1,0 +1,187 @@
+name: New release
+
+# The only way a release reaches this feed. Run it from Actions > New release > Run workflow.
+# preview builds a draft only xpander can see; publish makes it public, attaches the approved
+# image set and announces it in #xpander-releases. Re-running publish for the same date edits that
+# release in place and does not announce it again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: Which installs this release is for
+        type: choice
+        options: [both, airgap, hybrid]
+        default: both
+      release_date:
+        description: Release date YYYY-MM-DD (blank = today, tag vYYYY.MM.DD)
+        required: false
+      title:
+        description: Title (blank = "xpander.ai Self-Hosted · <Month D, YYYY>")
+        required: false
+      airgap_chart:
+        description: Air-gapped chart version (blank = newest)
+        required: false
+      hybrid_chart:
+        description: Hybrid chart version (blank = newest)
+        required: false
+      image_set:
+        description: Image set (latest-approved or onprem-<run>)
+        required: false
+        default: latest-approved
+      action_required:
+        description: Action required (adds a warning banner)
+        type: boolean
+        default: false
+      action_note:
+        description: Action note (blank = "Run every step below, in order.")
+        required: false
+      whats_new:
+        description: What's new, items separated by ;;
+        required: false
+      security:
+        description: Security, items separated by ;;
+        required: false
+      extra_upgrade_notes:
+        description: Extra upgrade notes (optional)
+        required: false
+      notes_file:
+        description: Notes file override, e.g. notes/2026-10-05.md (optional, replaces the generated notes)
+        required: false
+      mode:
+        description: preview = draft only xpander sees; publish = public + Slack
+        type: choice
+        options: [preview, publish]
+        default: preview
+
+permissions:
+  contents: write
+
+concurrency:
+  group: new-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve versions and render notes
+        id: prep
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          RELEASE_DATE: ${{ inputs.release_date }}
+          TITLE: ${{ inputs.title }}
+          AIRGAP_CHART: ${{ inputs.airgap_chart }}
+          HYBRID_CHART: ${{ inputs.hybrid_chart }}
+          IMAGE_SET: ${{ inputs.image_set }}
+          ACTION_REQUIRED: ${{ inputs.action_required }}
+          ACTION_NOTE: ${{ inputs.action_note }}
+          WHATS_NEW: ${{ inputs.whats_new }}
+          SECURITY: ${{ inputs.security }}
+          EXTRA_UPGRADE_NOTES: ${{ inputs.extra_upgrade_notes }}
+          NOTES_FILE: ${{ inputs.notes_file }}
+          # helm-charts is private; its airgap-chart-v* tags give the newest air-gapped chart
+          CHARTS_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          pip install --quiet pyyaml
+          python3 .github/scripts/new_release.py --out out
+          cat out/notes-preview.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preview as a draft
+        if: inputs.mode == 'preview'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          TITLE: ${{ steps.prep.outputs.title }}
+          KIND: ${{ steps.prep.outputs.kind }}
+        run: |
+          set -euo pipefail
+          assets=()
+          [ "$KIND" = hybrid ] || assets+=(out/release-manifest.json)
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --latest=false --title "$TITLE" --notes-file out/notes-preview.md "${assets[@]}"
+          elif [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file out/notes-preview.md
+            [ ${#assets[@]} -eq 0 ] || gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            echo "::warning::$TAG is already published; the preview is in this run's summary only."
+            exit 0
+          fi
+          echo "::notice::Draft $TAG is ready under Releases. Check it, then run again with mode publish."
+
+      - name: Publish
+        id: publish
+        if: inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          TITLE: ${{ steps.prep.outputs.title }}
+          KIND: ${{ steps.prep.outputs.kind }}
+        run: |
+          set -euo pipefail
+          announce=true
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --latest --title "$TITLE" --notes-file out/notes.md
+          else
+            [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ] || announce=false
+            gh release edit "$TAG" --draft=false --latest --title "$TITLE" --notes-file out/notes.md
+          fi
+          if [ "$KIND" = hybrid ]; then
+            gh release delete-asset "$TAG" release-manifest.json --yes 2>/dev/null || true
+          else
+            gh release upload "$TAG" out/release-manifest.json --clobber
+          fi
+          echo "announce=$announce" >> "$GITHUB_OUTPUT"
+          echo "url=$(gh release view "$TAG" --json url -q .url)" >> "$GITHUB_OUTPUT"
+
+      # main only takes reviewed changes, so the archive of published notes lives on its own branch
+      - name: Archive the notes
+        if: inputs.mode == 'publish'
+        env:
+          DATE: ${{ steps.prep.outputs.date }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          if git fetch --quiet origin notes-archive 2>/dev/null; then
+            git checkout --quiet -B notes-archive FETCH_HEAD
+          else
+            git checkout --quiet --orphan notes-archive
+            git rm -rq --cached .
+          fi
+          mkdir -p notes && cp out/notes-file.md "notes/$DATE.md"
+          git add "notes/$DATE.md"
+          if git diff --cached --quiet; then echo "notes/$DATE.md unchanged"; exit 0; fi
+          git commit --quiet -m "notes: $DATE"
+          git push --quiet origin notes-archive || echo "::warning::Could not archive notes/$DATE.md"
+
+      - name: Announce in Slack
+        if: inputs.mode == 'publish' && steps.publish.outputs.announce == 'true'
+        continue-on-error: true
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.RELEASES_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          TITLE: ${{ steps.prep.outputs.title }}
+          AIRGAP: ${{ steps.prep.outputs.airgap }}
+          HYBRID: ${{ steps.prep.outputs.hybrid }}
+          IMAGES: ${{ steps.prep.outputs.image_set }}
+          WHATS_NEW: ${{ steps.prep.outputs.whats_new }}
+          ACTION_REQUIRED: ${{ steps.prep.outputs.action_required }}
+          URL: ${{ steps.publish.outputs.url }}
+        run: |
+          python3 .github/scripts/release_slack.py release-message --tag "$TAG" --title "$TITLE" \
+            --airgap "$AIRGAP" --hybrid "$HYBRID" --images "$IMAGES" --action-required "$ACTION_REQUIRED" \
+            --whats-new "$WHATS_NEW" --url "$URL" --actor "${{ github.actor }}"
+          [ -n "$IMAGES" ] || exit 0
+          state="https://github.com/xpander-ai/release-manifests/releases/download/$IMAGES/slack.json"
+          curl -fsSL "$state" -o slack.json 2>/dev/null || { echo "no Slack card for $IMAGES"; exit 0; }
+          python3 .github/scripts/release_slack.py released --state slack.json --tag "$TAG"
+          if [ -n "$GH_TOKEN" ]; then
+            gh release upload "$IMAGES" slack.json --clobber -R xpander-ai/release-manifests \
+              || echo "::warning::Could not save the Slack card state for $IMAGES"
+          fi
