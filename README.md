@@ -13,27 +13,29 @@ Release notes for the xpander.ai self-hosted platform: what's new, security chan
 |---|---|
 | Release notes | [Releases](https://github.com/xpander-ai/releases/releases) on this repository, tagged `vYYYY.MM.DD` |
 | Image set of a release | `release-manifest.json`, attached to that release |
-| Newest approved image set | [`xpander-ai/release-manifests`](https://github.com/xpander-ai/release-manifests): `https://github.com/xpander-ai/release-manifests/releases/download/latest/release-manifest.json` |
+| Current image set (what `install.sh` and `image_sync.sh` download) | the `latest` release here: `https://github.com/xpander-ai/releases/releases/download/latest/release-manifest.json` |
 | Hybrid Helm chart | [charts.xpander.ai](https://charts.xpander.ai) |
 | Docker images | [hub.docker.com/u/xpanderaihub](https://hub.docker.com/u/xpanderaihub) |
 
 ## Publishing a release (xpander team)
 
-Releases are published by hand, only through the **New release** workflow. Nothing else writes here.
+A draft appears automatically after each approved image set; edit it and click **Publish**.
 
-1. Go to **Actions → New release → Run workflow**.
-2. Fill in the form:
-   - **Release type**: `both`, `airgap` or `hybrid`. This decides which upgrade steps the notes include.
-   - **Release date**: blank means today. The tag becomes `vYYYY.MM.DD`.
-   - **Air-gapped chart / Hybrid chart / Image set**: leave blank for the newest. The image set must have passed staging and production verification, or the run stops.
-   - **Action required**, **What's new**, **Security**: separate list items with `;;`.
-   - **Notes file override**: only for notes the form can't express. Start from [`notes/TEMPLATE.md`](notes/TEMPLATE.md).
-3. Run it with **mode: preview**. It creates a draft only the xpander team can see, with a note at the top listing every version it picked. Check the draft under **Releases**.
-4. Run it again with the same inputs and **mode: publish**. The release goes public and is marked Latest, the image set is attached, the notes are archived on the `notes-archive` branch, and #xpander-releases gets the announcement.
+1. Open **Releases**. The bot keeps one draft up to date: the image set, the chart versions and a folded list of the pull requests merged since the last release.
+2. Edit it in GitHub's editor. Write **What's new** and **Security** for customers, using the PR list as a source. Delete the upgrade block that doesn't apply.
+   - No bot draft? Click **Draft a new release**, tag it `vYYYY.MM.DD` and paste [`notes/TEMPLATE.md`](notes/TEMPLATE.md).
+   - **Image set**: keep the `Image set: onprem-<run>` line, or leave it out to ship the newest approved set.
+   - **Hybrid only**: write `Hybrid only` anywhere in the notes; no image set is attached.
+3. Save the draft and check the preview. Only the xpander team sees drafts.
+4. Click **Publish**. The **On publish** workflow then:
+   - checks the image set passed staging and production. If not, it turns the release back into a draft and says why in #xpander-releases.
+   - attaches `release-manifest.json` to the release.
+   - moves **Current image set** to it. It never moves it to an older set on its own.
+   - removes the bot's markers and PR list, keeps the release marked Latest, and posts the announcement in #xpander-releases.
 
-**Fix a typo:** run publish again with the same date. It edits the release in place and doesn't announce it again.
+**Fix a typo:** edit the published release on GitHub. Nothing runs again.
 
-**Pull back a bad image set:** run publish again with the same date and the previous `onprem-<run>` in **Image set**, then tell customers to sync again.
+**Roll back the image set:** Actions → **On publish** → Run workflow, with the older release's tag and **move_current** checked. Without **move_current**, a re-run only re-attaches the manifest and re-posts the announcement.
 
 ## Contributing
 

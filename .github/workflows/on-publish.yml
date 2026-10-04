@@ -1,0 +1,47 @@
+name: On publish
+
+# Finishes a release a person publishes: attaches its approved image set, moves
+# Current image set forward (never backwards), and announces it in Slack.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release to process again (vYYYY.MM.DD)
+        required: true
+        type: string
+      move_current:
+        description: Point Current image set at this release's image set, even if it is older (rollback)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: on-publish
+  cancel-in-progress: false
+
+jobs:
+  finish:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.tag_name != 'latest'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANIFESTS_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.RELEASES_BOT_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ inputs.tag }}
+          MOVE_CURRENT: ${{ inputs.move_current }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            python3 .github/scripts/on_publish.py --tag "$TAG" --move-current "$MOVE_CURRENT"
+          else
+            python3 .github/scripts/on_publish.py --event "$GITHUB_EVENT_PATH"
+          fi
