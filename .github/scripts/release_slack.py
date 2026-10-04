@@ -11,7 +11,7 @@ CHANNEL = "C0C6MMPCF89"
 STAGES = ("candidate", "staging", "production", "approved", "released")
 LABELS = {"candidate": "Candidate", "staging": "Staging", "production": "Production", "approved": "Approved", "released": "Released"}
 MARKS = {"pending": "◻️", "running": "⏳", "done": "✅", "failed": "❌", "skipped": "⏭️"}
-NEW_RELEASE_URL = "https://github.com/xpander-ai/releases/actions/workflows/new-release.yml"
+NEW_RELEASE_URL = "https://github.com/xpander-ai/releases/releases/new"
 MAX_CHANGES = 6
 
 
@@ -161,7 +161,11 @@ def cmd_approved(args):
         state["stages"][stage] = "done"
     save(args.state, state)
     update_card(state)
-    reply(state, f"🚀 *Approved for production* · now `latest` for new syncs · not announced yet · <{NEW_RELEASE_URL}|New release>", broadcast=True)
+    if args.draft_url:
+        text = f"🚀 *Approved for production* · draft ready · <{args.draft_url}|Edit and publish>"
+    else:
+        text = f"🚀 *Approved for production* · ready to announce · <{NEW_RELEASE_URL}|Draft a new release>"
+    reply(state, text, broadcast=True)
 
 
 def cmd_superseded(args):
@@ -207,6 +211,10 @@ def cmd_release_message(args):
     slack("chat.postMessage", {"channel": CHANNEL, "text": text})
 
 
+def cmd_notice(args):
+    slack("chat.postMessage", {"channel": CHANNEL, "text": args.text})
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +235,7 @@ def main(argv=None):
     p.set_defaults(func=cmd_stage)
     p = sub.add_parser("approved")
     p.add_argument("--state", required=True)
+    p.add_argument("--draft-url", default="")
     p.set_defaults(func=cmd_approved)
     p = sub.add_parser("superseded")
     p.add_argument("--state", required=True)
@@ -243,6 +252,9 @@ def main(argv=None):
         p.add_argument(name, default="")
     p.add_argument("--action-required", default="false", choices=("true", "false"))
     p.set_defaults(func=cmd_release_message)
+    p = sub.add_parser("notice")
+    p.add_argument("--text", required=True)
+    p.set_defaults(func=cmd_notice)
     args = parser.parse_args(argv)
     try:
         args.func(args)
