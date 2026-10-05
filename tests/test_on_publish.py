@@ -73,7 +73,7 @@ def _world(monkeypatch, approved=APPROVED, pointer="onprem-100", slack_state=Non
     return calls, posts
 
 
-RELEASE = {"tag_name": "v2026.10.05", "name": "xpander.ai Self-Hosted · October 5, 2026", "html_url": "https://r", "body": BODY}
+RELEASE = {"tag_name": "v2026.10.05", "name": "October 5, 2026", "html_url": "https://r", "body": BODY}
 
 
 def test_publish_attaches_moves_forward_cleans_and_announces(monkeypatch):
