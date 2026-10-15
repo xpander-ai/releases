@@ -20,7 +20,7 @@ Image set: [`onprem-<run>`](https://github.com/xpander-ai/release-manifests/rele
 
 ### Air-gapped installs
 
-Replace `<namespace>`, `<your-registry>` and `<xpander-token>` (from your license email). Every command works from a terminal or a CI/CD pipeline.
+Replace `<namespace>`, `<your-registry>` and `<xpander-token>` (from your license email). Every command works from a terminal or a CI/CD pipeline and needs Helm 3.14 or newer.
 
 **1. Download the release.**
 
@@ -41,14 +41,16 @@ bash image_sync.sh --source-user xpanderaihub --source-token <xpander-token> \
 ```bash
 helm registry login registry-1.docker.io -u xpanderaihub -p <xpander-token>
 helm upgrade xpander oci://registry-1.docker.io/xpanderaihub/xpander-airgap --version <version> \
-  -n <namespace> --reuse-values -f pins.yaml --wait --timeout 30m
+  -n <namespace> --reset-then-reuse-values -f pins.yaml --wait --timeout 30m
 ```
 
 Then run the [verification guide](https://pages.xpander.ai/airgap-verification-guide).
 
 ### Hybrid installs
 
+Needs Helm 3.14 or newer.
+
 ```bash
 helm repo add xpander https://charts.xpander.ai && helm repo update xpander
-helm upgrade xpander xpander/xpander --version <version> -n <namespace> --reuse-values --wait --timeout 30m
+helm upgrade xpander xpander/xpander --version <version> -n <namespace> --reset-then-reuse-values --wait --timeout 30m
 ```
