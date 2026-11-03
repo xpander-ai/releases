@@ -1,0 +1,60 @@
+name: Notify docs agent
+
+# When a release is published, asks the docs agent to update docs.xpander.ai for it.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release to send again (vYYYY.MM.DD)
+        required: true
+        type: string
+      ping:
+        description: Send a test message only (the agent replies and changes nothing)
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notify-docs-agent-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: github.event_name == 'workflow_dispatch' || (github.event.release.tag_name != 'latest' && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke the docs agent
+        env:
+          XPANDER_API_KEY: ${{ secrets.DOCS_AGENT_API_KEY }}
+          AGENT_ID: ${{ vars.DOCS_AGENT_ID || '73450ad8-c27b-40db-b3ea-7baccec572e6' }}
+          USER_ID: ${{ vars.DOCS_AGENT_USER_ID || '3d368c6b-1a4e-472a-9872-4245fa4232be' }}
+          USER_EMAIL: ${{ vars.DOCS_AGENT_USER_EMAIL || 'jessica@xpander.ai' }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          PING: ${{ github.event_name == 'workflow_dispatch' && inputs.ping || 'false' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$XPANDER_API_KEY" ]; then
+            echo "::error::DOCS_AGENT_API_KEY is not set; the docs agent was not notified for $TAG."
+            exit 1
+          fi
+          url="https://github.com/$REPO/releases/tag/$TAG"
+          if [ "$PING" = "true" ]; then
+            text="Test ping from $REPO for release $TAG ($url). Reply \"received\" and do nothing else: no docs changes, no PR."
+          else
+            text="Release $TAG was published in $REPO: $url. Follow the release-docs-pr-v2 skill end to end for this release."
+          fi
+          body=$(jq -n --arg t "$text" --arg id "$USER_ID" --arg email "$USER_EMAIL" \
+            '{input: {text: $t, user: {id: $id, email: $email}}}')
+          status=$(curl -sS -o response.json -w '%{http_code}' --retry 3 --retry-all-errors \
+            -X POST "https://api.xpander.ai/v1/agents/$AGENT_ID/invoke/async" \
+            -H "x-api-key: $XPANDER_API_KEY" -H "Content-Type: application/json" -d "$body")
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Docs agent invoke answered HTTP $status for $TAG: $(head -c 300 response.json)"
+            exit 1
+          fi
+          echo "Docs agent notified for $TAG: task $(jq -r '.id // "?"' response.json) ($(jq -r '.status // "?"' response.json))"
