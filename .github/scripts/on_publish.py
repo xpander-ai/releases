@@ -15,6 +15,7 @@ REPO = "xpander-ai/releases"
 MANIFESTS_REPO = "xpander-ai/release-manifests"
 MANIFESTS_DOWNLOAD = f"https://github.com/{MANIFESTS_REPO}/releases/download"
 POINTER = "latest"
+RELEASES_DOWNLOAD = f"https://github.com/{REPO}/releases/download"
 HYBRID_ONLY = "Hybrid only"
 IMAGE_SET = re.compile(r"Image set:?\**:?\s*\[?`?(onprem-[1-9][0-9]*)")
 AIRGAP_CHART = re.compile(r"`xpander-airgap`\s*`(\d+\.\d+\.\d+)`")
@@ -141,7 +142,18 @@ def finish(release, actor, dispatched=False, move_current=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release-manifest.json"
             path.write_bytes(manifest)
-            gh("release", "upload", tag, str(path), "--repo", REPO, "--clobber")
+            # PRO-5462: released assets are immutable (GitHub immutable releases), so the approved image set is attached
+            # to the DRAFT before Publish (mono release_draft.attach_manifest). Here it is only checked; an older,
+            # mutable release without it still gets it attached.
+            attached = fetch(f"{RELEASES_DOWNLOAD}/{tag}/release-manifest.json")
+            if attached is None:
+                gh("release", "upload", tag, str(path), "--repo", REPO, "--clobber")
+            elif json.loads(attached) != json.loads(manifest):
+                slack("notice", "--text", f"⚠️ *{tag}* carries a release-manifest.json that is not the approved image set {release_id}; Current image set not moved")
+                print(f"::error::{tag}: attached release-manifest.json differs from the approved image set {release_id}")
+                return 1
+            else:
+                print(f"{tag}: the approved image set {release_id} is already attached")
             current = current_pointer()
             if should_move(release_id, current, move_current, dispatched):
                 gh("release", "upload", POINTER, str(path), "--repo", REPO, "--clobber")
