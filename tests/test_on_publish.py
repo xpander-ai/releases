@@ -150,3 +150,25 @@ def test_released_card_flip_needs_state_and_token(monkeypatch):
     op.finish(RELEASE, "moriel")
     assert any(p[0] == "released" for p in posts)
     assert any(c[:3] == ["release", "upload", "onprem-200"] for c in calls)
+
+
+def test_an_attached_approved_manifest_is_kept_not_reuploaded(monkeypatch):
+    # PRO-5462: immutable releases - the draft already carries the approved set, publish only checks it
+    calls, _ = _world(monkeypatch)
+    real_fetch = op.fetch
+    attached = f"{op.RELEASES_DOWNLOAD}/v2026.10.05/release-manifest.json"
+    monkeypatch.setattr(op, "fetch", lambda url: json.dumps(APPROVED).encode() if url == attached else real_fetch(url))
+    assert op.finish(RELEASE, "moriel") == 0
+    assert [c[2] for c in calls if c[:2] == ["release", "upload"]] == ["latest"]
+
+
+def test_a_different_attached_manifest_stops_the_release(monkeypatch):
+    calls, posts = _world(monkeypatch)
+    real_fetch = op.fetch
+    attached = f"{op.RELEASES_DOWNLOAD}/v2026.10.05/release-manifest.json"
+    other = {**APPROVED, "release_id": "onprem-199"}
+    monkeypatch.setattr(op, "fetch", lambda url: json.dumps(other).encode() if url == attached else real_fetch(url))
+    assert op.finish(RELEASE, "moriel") == 1
+    assert not any(c[:2] == ["release", "upload"] for c in calls)
+    assert posts[0][0] == "notice" and "not the approved image set" in posts[0][2]
+
