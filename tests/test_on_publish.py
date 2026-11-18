@@ -172,3 +172,46 @@ def test_a_different_attached_manifest_stops_the_release(monkeypatch):
     assert not any(c[:2] == ["release", "upload"] for c in calls)
     assert posts[0][0] == "notice" and "not the approved image set" in posts[0][2]
 
+
+
+def _uploads(calls):
+    return [c for c in calls if c[:2] == ["release", "upload"] and c[2] != "onprem-200"]
+
+
+def test_only_the_pointer_release_is_ever_uploaded_with_clobber(monkeypatch):
+    for kwargs in ({}, {"dispatched": True}, {"dispatched": True, "move_current": True}):
+        calls, _ = _world(monkeypatch)
+        assert op.finish(RELEASE, "moriel", **kwargs) == 0
+        for call in _uploads(calls):
+            assert ("--clobber" in call) == (call[2] == op.POINTER), call
+
+
+def test_a_published_release_is_never_given_a_newer_image_set(monkeypatch):
+    # a dispatch with move_current on a release whose notes now name a newer set than the one attached
+    calls, posts = _world(monkeypatch)
+    real_fetch = op.fetch
+    attached = f"{op.RELEASES_DOWNLOAD}/v2026.10.05/release-manifest.json"
+    older = {**APPROVED, "release_id": "onprem-150"}
+    monkeypatch.setattr(op, "fetch", lambda url: json.dumps(older).encode() if url == attached else real_fetch(url))
+    assert op.finish(RELEASE, "moriel", dispatched=True, move_current=True) == 1
+    assert not _uploads(calls)
+    assert "vYYYY.MM.DD-2" in posts[0][2]
+
+
+def test_a_refused_attach_stops_before_current_moves(monkeypatch, capsys):
+    calls, _ = _world(monkeypatch)
+    recording = op.gh
+
+    def gh(*args, token=None):
+        if args[:3] == ("release", "upload", "v2026.10.05"):
+            raise op.subprocess.CalledProcessError(1, "gh", "asset under the same name already exists")
+        return recording(*args, token=token)
+    monkeypatch.setattr(op, "gh", gh)
+    assert op.finish(RELEASE, "moriel") == 1
+    assert not any(c[:3] == ["release", "upload", op.POINTER] for c in calls)
+    assert "vYYYY.MM.DD-2" in capsys.readouterr().out
+
+
+def test_attach_never_writes_the_pointer():
+    with pytest.raises(ValueError):
+        op.attach(op.POINTER, Path("release-manifest.json"))

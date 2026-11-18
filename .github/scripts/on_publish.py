@@ -26,6 +26,12 @@ PR_DETAILS = re.compile(r"<details><summary>PRs since last release</summary>.*?<
 SLACK = Path(__file__).with_name("release_slack.py")
 
 
+NEW_TAG_HINT = (
+    "A published release's assets are never replaced: to ship a different image set, cut a new tag "
+    "(vYYYY.MM.DD-2) and publish that release instead."
+)
+
+
 class NotApproved(Exception):
     pass
 
@@ -100,6 +106,19 @@ def gh(*args, token=None):
     return subprocess.check_output(["gh", *args], text=True, env=env)
 
 
+def attach(tag, path):
+    """Add release-manifest.json to a published release that has none; never replaces an existing asset."""
+    if tag == POINTER:
+        raise ValueError(f"{POINTER} moves only through move_pointer")
+    # no --clobber: gh refuses an asset name the release already carries
+    gh("release", "upload", tag, str(path), "--repo", REPO)
+
+
+def move_pointer(path):
+    """Point Current image set at path; the one release whose asset is replaced on purpose."""
+    gh("release", "upload", POINTER, str(path), "--repo", REPO, "--clobber")
+
+
 def slack(*args):
     subprocess.run([sys.executable, str(SLACK), *args], check=False)
 
@@ -147,16 +166,20 @@ def finish(release, actor, dispatched=False, move_current=False):
             # mutable release without it still gets it attached.
             attached = fetch(f"{RELEASES_DOWNLOAD}/{tag}/release-manifest.json")
             if attached is None:
-                gh("release", "upload", tag, str(path), "--repo", REPO, "--clobber")
+                try:
+                    attach(tag, path)
+                except subprocess.CalledProcessError as exc:
+                    print(f"::error::{tag}: release-manifest.json not attached ({exc}). {NEW_TAG_HINT}")
+                    return 1
             elif json.loads(attached) != json.loads(manifest):
-                slack("notice", "--text", f"⚠️ *{tag}* carries a release-manifest.json that is not the approved image set {release_id}; Current image set not moved")
-                print(f"::error::{tag}: attached release-manifest.json differs from the approved image set {release_id}")
+                slack("notice", "--text", f"⚠️ *{tag}* carries a release-manifest.json that is not the approved image set {release_id}; Current image set not moved. {NEW_TAG_HINT}")
+                print(f"::error::{tag}: attached release-manifest.json differs from the approved image set {release_id}. {NEW_TAG_HINT}")
                 return 1
             else:
                 print(f"{tag}: the approved image set {release_id} is already attached")
             current = current_pointer()
             if should_move(release_id, current, move_current, dispatched):
-                gh("release", "upload", POINTER, str(path), "--repo", REPO, "--clobber")
+                move_pointer(path)
                 print(f"Current image set: {current} -> {release_id}")
             else:
                 print(f"::warning::Current image set stays on {current}; {release_id} is older or move_current is off")
