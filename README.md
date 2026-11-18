@@ -35,7 +35,9 @@ A draft appears automatically after each approved image set; edit it and click *
 
 **Fix a typo:** edit the published release on GitHub. Nothing runs again.
 
-**Roll back the image set:** Actions → **On publish** → Run workflow, with the older release's tag and **move_current** checked. Without **move_current**, a re-run only re-attaches the manifest and re-posts the announcement.
+**Ship a different image set:** never change the files of a published release; customers may already have downloaded them. Cut a new release with the next free tag for the day (`vYYYY.MM.DD-2`, then `-3`) and publish that. **On publish** refuses to replace `release-manifest.json` on a published release, and stops without moving Current image set when the attached file is not the approved image set.
+
+**Roll back the image set:** Actions → **On publish** → Run workflow, with the older release's tag and **move_current** checked. Without **move_current**, a re-run only attaches the manifest when the release has none and re-posts the announcement.
 
 ## Contributing
 
