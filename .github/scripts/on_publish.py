@@ -154,7 +154,17 @@ def finish(release, actor, dispatched=False, move_current=False):
             if dispatched:
                 print(f"::error::{tag}: {exc}")
                 return 1
-            gh("release", "edit", tag, "--repo", REPO, "--draft=true")
+            # a release that already carries an image set stays published: back in draft its files could be replaced
+            if fetch(f"{RELEASES_DOWNLOAD}/{tag}/release-manifest.json") is not None:
+                slack("notice", "--text", f"⚠️ *{tag}* stays published · {exc}. {NEW_TAG_HINT}")
+                print(f"::error::{tag}: {exc}. {NEW_TAG_HINT}")
+                return 1
+            try:
+                gh("release", "edit", tag, "--repo", REPO, "--draft=true")
+            except subprocess.CalledProcessError as edit_exc:
+                slack("notice", "--text", f"⚠️ *{tag}* could not be moved back to draft · {exc}")
+                print(f"::error::{tag}: {exc}; moving it back to draft failed ({edit_exc})")
+                return 1
             slack("notice", "--text", f"⚠️ *{tag}* moved back to draft · {exc}")
             print(f"::error::{tag} moved back to draft: {exc}")
             return 1
@@ -169,8 +179,13 @@ def finish(release, actor, dispatched=False, move_current=False):
                 try:
                     attach(tag, path)
                 except subprocess.CalledProcessError as exc:
-                    print(f"::error::{tag}: release-manifest.json not attached ({exc}). {NEW_TAG_HINT}")
-                    return 1
+                    # the download URL can lag a fresh publish: an already attached approved set is fine
+                    attached = fetch(f"{RELEASES_DOWNLOAD}/{tag}/release-manifest.json")
+                    if attached is None or json.loads(attached) != json.loads(manifest):
+                        slack("notice", "--text", f"⚠️ *{tag}*: release-manifest.json not attached; Current image set not moved. {NEW_TAG_HINT}")
+                        print(f"::error::{tag}: release-manifest.json not attached ({exc}). {NEW_TAG_HINT}")
+                        return 1
+                    print(f"{tag}: the approved image set {release_id} is already attached")
             elif json.loads(attached) != json.loads(manifest):
                 slack("notice", "--text", f"⚠️ *{tag}* carries a release-manifest.json that is not the approved image set {release_id}; Current image set not moved. {NEW_TAG_HINT}")
                 print(f"::error::{tag}: attached release-manifest.json differs from the approved image set {release_id}. {NEW_TAG_HINT}")

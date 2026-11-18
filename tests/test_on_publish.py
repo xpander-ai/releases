@@ -175,7 +175,7 @@ def test_a_different_attached_manifest_stops_the_release(monkeypatch):
 
 
 def _uploads(calls):
-    return [c for c in calls if c[:2] == ["release", "upload"] and c[2] != "onprem-200"]
+    return [c for c in calls if c[:2] == ["release", "upload"] and c[c.index("--repo") + 1] == op.REPO]
 
 
 def test_only_the_pointer_release_is_ever_uploaded_with_clobber(monkeypatch):
@@ -215,3 +215,35 @@ def test_a_refused_attach_stops_before_current_moves(monkeypatch, capsys):
 def test_attach_never_writes_the_pointer():
     with pytest.raises(ValueError):
         op.attach(op.POINTER, Path("release-manifest.json"))
+
+
+def test_a_release_with_an_image_set_is_never_moved_back_to_draft(monkeypatch):
+    calls, posts = _world(monkeypatch, approved=None)
+    real_fetch = op.fetch
+    attached = f"{op.RELEASES_DOWNLOAD}/v2026.10.05/release-manifest.json"
+    monkeypatch.setattr(op, "fetch", lambda url: json.dumps(APPROVED).encode() if url == attached else real_fetch(url))
+    assert op.finish(RELEASE, "moriel") == 1
+    assert not any("--draft=true" in c for c in calls) and not _uploads(calls)
+    assert "vYYYY.MM.DD-2" in posts[0][2]
+
+
+def test_a_refused_attach_of_the_same_set_still_finishes(monkeypatch):
+    calls, _ = _world(monkeypatch)
+    real_fetch, recording = op.fetch, op.gh
+    attached = f"{op.RELEASES_DOWNLOAD}/v2026.10.05/release-manifest.json"
+    seen = []
+
+    def fetch(url):
+        if url == attached:
+            seen.append(url)
+            return json.dumps(APPROVED).encode() if len(seen) > 1 else None
+        return real_fetch(url)
+
+    def gh(*args, token=None):
+        if args[:3] == ("release", "upload", "v2026.10.05"):
+            raise op.subprocess.CalledProcessError(1, "gh", "asset under the same name already exists")
+        return recording(*args, token=token)
+    monkeypatch.setattr(op, "fetch", fetch)
+    monkeypatch.setattr(op, "gh", gh)
+    assert op.finish(RELEASE, "moriel") == 0
+    assert [c[2] for c in _uploads(calls)] == ["latest"]
