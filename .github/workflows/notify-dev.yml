@@ -1,0 +1,30 @@
+name: Release PR notice (#dev)
+
+# xpander-ai/xpander's release-pr.yml dispatches release-pr-ready when it opens a develop -> main release PR (every 12
+# hours or the button). David, 23 Nov 2026: "a notification for approval in #dev ... what is ready, what goes up and what
+# was tested". The Release Manager bot (RELEASES_BOT_TOKEN, a member of #dev) posts it; notify_dev.py checks the payload.
+on:
+  repository_dispatch:
+    types: [release-pr-ready]
+
+permissions: {}
+
+concurrency:
+  group: notify-dev
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Post the notice to #dev
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.RELEASES_BOT_TOKEN }}
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: python3 .github/scripts/notify_dev.py
